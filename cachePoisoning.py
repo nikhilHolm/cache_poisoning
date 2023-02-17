@@ -1,203 +1,257 @@
-import requests
-import random
-import os
-
-TIMEOUT_DELAY = 10
-
-CANARY = "ndvyepenbvtidpvyzh.com"
-
-headersToFuzz = {
-    "x-forwarded-scheme": "http",
-    "x-forwarded-host": CANARY,
-    "x-forwarded-proto": "http",
-    "x-http-method-override": "POST",
-    "x-amz-website-redirect-location": CANARY,
-    "x-rewrite-url": CANARY,
-    "x-host": CANARY,
-    "user-agent": CANARY,
-    "handle": CANARY,
-    "h0st": CANARY,
-    "Transfer-Encoding": CANARY,
-    "x-original-url": CANARY,
-    "x-original-host": CANARY,
-    "x-forwarded-prefix": CANARY,
-    "x-amz-server-side-encryption": CANARY,
-    "trailer": CANARY,
-    "fastly-ssl": CANARY,
-    "fastly-host": CANARY,
-    "fastly-ff": CANARY,
-    "fastly-client-ip": CANARY,
-    "content-type": CANARY,
-    "api-version": CANARY,
-    "acunetix-header": CANARY,
-    "accept-version": CANARY
-}
+from w3af.core.controllers.plugins.audit_plugin import AuditPlugin
+from w3af.core.data.fuzzer.fuzzer import create_mutants
+from w3af.core.data.kb.vuln import Vuln
+from w3af.core.data.constants import severity
+from w3af.core.data.dc.headers import Headers
+from w3af.core.data.fuzzer.mutants.headers_mutant import HeadersMutant
+from w3af.core.data.fuzzer.utils import rand_alnum
 
 
-def behavior_or_confirmed_message(behaviorOrConfirmed, behaviorType, explicitCache, url, header="default"):
+import re
+import time
+import copy
+import logging
 
-    messageDict = {"REFLECTION": "HEADER REFLECTION",
-                   "STATUS": "DIFFERENT STATUS-CODE",
-                   "LENGTH": "DIFFERENT RESPONSE LENGTH",
-                   "BEHAVIOR": "[INTERESTING BEHAVIOR]",
-                   "CONFIRMED": "VULNERABILITY CONFIRMED! |"
-                   }
-
-    if header != "default":
-        message = f"{messageDict[behaviorOrConfirmed]} {messageDict[behaviorType]} | EXPLICIT CACHE : {explicitCache} | URL: {url} | HEADER : {header}\n"
-        print(message)
-    else:
-        message = f"{messageDict[behaviorOrConfirmed]} PORT {messageDict[behaviorType]} | EXPLICIT CACHE : {explicitCache} | URL: {url} | HEADER : {header}\n"
-        print(message)
+logger = logging.getLogger(__name__)
 
 
-def canary_in_response(response: requests.Response):
-    for val in response.headers.values():
-        if CANARY in val:
-            return True
-    if CANARY in response.text:
-        return True
+class Web_Cache(AuditPlugin):
+    """
+    Identify the URLs for web cache poisoning
 
-    return False
+    :author: nikhil.mahajan@holmsecurity.com
+    """
 
+    CANARY = "holmsecurity.com"
 
-def use_caching(headers):
-    if headers.get("X-Cache-Hits") or headers.get("X-Cache") or headers.get("Age") or headers.get("Cf-Cache-Status") or (headers.get("Cache-Control") and ("public" in headers.get("Cache-Control"))):
-        return True
-    else:
-        return False
+    TIMEOUT_DELAY = 10
 
+    headersToFuzz = [
+        ("x-forwarded-scheme", ""),
+        ("x-forwarded-host", ""),
+        ("x-forwarded-proto", ""),
+        ("x-http-method-override", ""),
+        ("x-amz-website-redirect-location", ""),
+        ("x-rewrite-url", ""),
+        ("x-host", ""),
+        ("user-agent", ""),
+        ("handle", ""),
+        ("h0st", ""),
+        ("Transfer-Encoding", ""),
+        ("x-original-url", ""),
+        ("x-original-host", ""),
+        ("x-forwarded-prefix", ""),
+        ("x-amz-server-side-encryption", ""),
+        ("trailer", ""),
+        ("fastly-ssl", ""),
+        ("fastly-host", ""),
+        ("fastly-ff", ""),
+        ("fastly-client-ip", ""),
+        ("content-type", ""),
+        ("api-version", ""),
+        ("acunetix-header", ""),
+        ("accept-version", ""),
+    ]
 
-def vulnerability_confirmed(responseCandidate: requests.Response, url, randNum, buster):
-    try:
-        confirmationResponse = requests.get(
-            f"{url}?cacheBusterX{randNum}={buster}", allow_redirects=False, timeout=TIMEOUT_DELAY)
-    except:
-        return False
-    if confirmationResponse.status_code == responseCandidate.status_code and confirmationResponse.text == responseCandidate.text:
-        if canary_in_response(responseCandidate):
-            if canary_in_response(confirmationResponse):
-                return True
-            else:
-                return False
-        else:
-            return True
-    else:
-        return False
+    def __init__(self):
+        AuditPlugin.__init__(self)
 
+    def run(self, freq, orig_response, debug_id):
+        self.debug_id = debug_id
+        self.audit(freq, orig_response, debug_id)
 
-def base_request(url):
-    randNum = str(random.randrange(9999999999999))
-    buster = str(random.randrange(9999999999999))
-    try:
-        response = requests.get(
-            f"{url}?cacheBusterX{randNum}={buster}", allow_redirects=False, timeout=TIMEOUT_DELAY)
-    except:
-        return None
+    def audit(self, freq, orig_response, debugging_id):
+        """
+        Test URLs for web cache poisoning vulnerabilities
 
-    return response
+        :param freq: A FuzzableRequest
+        :param orig_response: The HTTP response associated with the fuzzable request
+        :param debugging_id: A unique identifier for this call to audit()
+        """
 
+        # self._path_based_caching(freq, orig_response)
 
-def port_poisoning_check(url, initialResponse):
-    randNum = str(random.randrange(9999999999999))
-    buster = str(random.randrange(9999999999999))
-    findingState = 0
+        self.headers_poisoning_check(freq, orig_response)
 
-    host = url.split("://")[1].split("/")[0]
-    response = None
-    try:
-        response = requests.get(f"{url}?cacheBusterX{randNum}={buster}", headers={"Host": f"{host}:8888"}, allow_redirects=False, timeout=TIMEOUT_DELAY)
-    except:
-        return
-    explicitCache = str(use_caching(response.headers)).upper()
+    def headers_poisoning_check(self, freq, orig_response):
+        normal_check = 0
 
-    if response.status_code != initialResponse.status_code:
-        findingState = 1
-        if vulnerability_confirmed(response, url, randNum, buster):
-            findingState = 2
-            behavior_or_confirmed_message("CONFIRMED", "STATUS", explicitCache, url)
-            return True
-        else:
-            behavior_or_confirmed_message("BEHAVIOR", "STATUS", explicitCache, url)
+        total_times = 10
 
-    elif abs(len(response.text) - len(initialResponse.text)) > 0.25 * len(initialResponse.text):
-        findingState = 1
-        if vulnerability_confirmed(response, url, randNum, buster):
-            findingState = 2
-            behavior_or_confirmed_message("CONFIRMED", "LENGTH", explicitCache, url)
-            return True
-        else:
-            behavior_or_confirmed_message("BEHAVIOR", "LENGTH", explicitCache, url)
+        while total_times:
+            total_times -= 1
 
-    if findingState == 1:
-        return False
+            for injected_header in self.headersToFuzz:
+                header = Headers([injected_header])
+                freq_copy = copy.deepcopy(freq)
+                freq_copy.set_headers(headers=header)
+                freq_copy.set_force_fuzzing_headers(headers=header)
 
+                poisoned_mutants = create_mutants(
+                    freq=freq_copy,
+                    mutant_str_list=[self.CANARY],
+                    orig_resp=orig_response,
+                    debug_id=self.debug_id,
+                )
 
-def headers_poisoning_check(url, initialResponse):
-    findingState = 0
-    for header in headersToFuzz.keys():
-        payload = {header: headersToFuzz[header]}
-        randNum = str(random.randrange(9999999999999))
-        buster = str(random.randrange(9999999999999))
-        response = None
+                poisoned_res = None
+
+                for mutant in poisoned_mutants:
+                    if (type(mutant) == HeadersMutant) and poisoned_res is None:
+                        poisoned_res = self._uri_opener.send_mutant(
+                            mutant, cache=False, grep=True, debug_id=self.debug_id, follow_redirects=False
+                        )
+
+                if self._check_if_input_returned(self.CANARY, poisoned_res):
+                    print(
+                        "********************  INPUT RETURNED - cache poison ***************")
+                    total_attempts = 10
+                    while total_attempts:
+                        self.custom_sleep(total_attempts)
+                        payload = [rand_alnum(10).lower()]
+
+                        total_attempts -= 1
+
+                        header = Headers([injected_header])
+                        freq_copy = copy.deepcopy(freq)
+                        freq_copy.set_headers(headers=header)
+                        freq_copy.set_force_fuzzing_headers(headers=header)
+
+                        mutants = create_mutants(
+                            freq_copy,
+                            mutant_str_list=payload,
+                            orig_resp=orig_response,
+                            debug_id=self.debug_id,
+                        )
+
+                        for mutant in mutants:
+                            normal_res = self._uri_opener.send_mutant(
+                                mutant,
+                                grep=True,
+                                debug_id=self.debug_id,
+                            )
+                            if self._check_if_input_returned(self.CANARY, normal_res):
+                                print(
+                                    "*********************  INPUT RETURNED  ********************************")
+                                normal_check += 1
+
+                    if 5 <= normal_check < 10:
+                        total_attempts = 0
+                        normal_check = 0
+                        total_times = 0
+                        self._report_headers_poisoning_check(
+                            injected_header, orig_response
+                        )
+                        break
+                    elif (normal_check == 10):
+                        total_attempts = 0
+                        normal_check = 0
+                        logger.info(
+                            "No cache in middle, just payload is reflecting everytime")
+
+                else:
+                    continue
+
+    def custom_sleep(self, sec):
+        time.sleep(sec)
+
+    def _report_headers_poisoning_check(
+        self, header, orig_response
+    ):
+        desc = (
+            f"A unkeyed header [{header[0]}] with poisoned value {self.CANARY} is cached in response page"
+        )
+
+        v = Vuln(
+            name="Web Cache Poisoning with an Unkeyed Header",
+            desc=desc,
+            severity=severity.HIGH,
+            response_ids=orig_response.id,
+            vulndb_id=" ",
+            plugin_name=self.get_name(),
+            debug_id=self.debug_id,
+        )
+        v.set_url(orig_response.get_url())
+
+        # logger.info(v.get_desc(), debug_id=self.debug_id)
+        self.kb_append_uniq(self, "Unkeyed_header_cache_poisoning", v)
+
+    def _path_based_caching(self, freq, orig_response):
+        flag = 0
+        payload = [rand_alnum(10).lower()]
+
+        if freq.get_method().upper() != "GET":
+            return
+
+        mutants = create_mutants(
+            freq,
+            mutant_str_list=payload,
+            orig_resp=orig_response,
+            debug_id=self.debug_id,
+        )
+        print(f"mutants :{mutants}")
+
+        for mutant in mutants:
+            poisoned_res = self._uri_opener.send_mutant(
+                mutant,
+                grep=True,
+                debug_id=self.debug_id,
+            )
+
+            if self._check_if_input_returned(payload, poisoned_res):
+                flag = 1
+
         try:
-            response = requests.get(f"{url}?cacheBusterX{randNum}={buster}",
-                                    headers=payload, allow_redirects=False, timeout=TIMEOUT_DELAY)
-        except:
-            print("Request error... Skipping the URL.")
-            continue
-        explicitCache = str(use_caching(response.headers)).upper()
+            normal_res = self._uri_opener.GET(
+                freq.get_uri(),
+                cache=False,
+                grep=True,
+                timeout=10,
+                debug_id=self.debug_id,
+            )
+        except (RuntimeError, BaseException):
+            pass
 
-        if canary_in_response(response):
-            findingState = 1
-            # potential_verbose_message("CANARY", url)
-            if vulnerability_confirmed(response, url, randNum, buster):
-                findingState = 2
-                behavior_or_confirmed_message(
-                    "CONFIRMED", "REFLECTION", explicitCache, url, header=header)
-                return True
-            else:
-                # potential_verbose_message("UNSUCCESSFUL", url)
-                behavior_or_confirmed_message(
-                    "BEHAVIOR", "REFLECTION", explicitCache, url, header=header)
+        if (flag == 1 and self._check_if_input_returned(payload, normal_res)):
+            self._report_path_based_poisoning_check(
+                payload, orig_response)
 
-        elif response.status_code != initialResponse.status_code:
-            findingState = 1
-            # potential_verbose_message("STATUS_CODE", url)
-            if vulnerability_confirmed(response, url, randNum, buster):
-                findingState = 2
-                behavior_or_confirmed_message(
-                    "CONFIRMED", "STATUS", explicitCache, url, header=header)
-                return True
-            else:
-                # potential_verbose_message("UNSUCCESSFUL", url)
-                behavior_or_confirmed_message(
-                    "BEHAVIOR", "STATUS", explicitCache, url, header=header)
+    def _report_path_based_poisoning_check(
+        self, payload, orig_response
+    ):
+        desc = (
+            f"Web Cache Poisoning [path based] has been found by setting parameter {payload[0]} in request, "
+            f"Resulting in response containing {payload[0]}.\n"
+            f"Normal response after sending the request containing same parameter {payload[0]} indicates it has been cached."
+        )
 
-        elif abs(len(response.text) - len(initialResponse.text)) > 0.25 * len(initialResponse.text):
-            findingState = 1
-            # potential_verbose_message("LENGTH", url)
-            if vulnerability_confirmed(response, url, randNum, buster):
-                findingState = 2
-                behavior_or_confirmed_message(
-                    "CONFIRMED", "LENGTH", explicitCache, url, header=header)
-                return True
-            else:
-                # potential_verbose_message("UNSUCCESSFUL", url)
-                behavior_or_confirmed_message(
-                    "BEHAVIOR", "LENGTH", explicitCache, url, header=header)
+        v = Vuln(
+            name="Web Cache Poisoning [path based]",
+            desc=desc,
+            severity=severity.HIGH,
+            response_ids=orig_response.id,
+            vulndb_id=" ",
+            plugin_name=self.get_name(),
+            debug_id=self.debug_id,
+        )
+        v.set_url(orig_response.get_url())
 
-    if findingState == 1:
-        return False
+        # logger.info(v.get_desc(), debug_id=self.debug_id)
+        self.kb_append_uniq(self, "path_based_cache_poisoning", v)
 
-
-def cache_poisoning_check(url):
-    initialResponse = base_request(url)
-    if not initialResponse:
-        return
-
-    if initialResponse.status_code in (200, 304, 302, 301, 401, 402, 403):
-        if headers_poisoning_check(url, initialResponse) or port_poisoning_check(url, initialResponse):
+    def _check_if_input_returned(self, payload, response):
+        """
+        return true if the regex is able to find payload or the query parameter in the response body.
+        """
+        if re.search(r"\b{}\b".format(payload[0]), response.get_body()):
             return True
 
-    return False
+        return False
+
+    def get_long_desc(self):
+        """
+        :return: A DETAILED description of the plugin functions and features.
+        """
+        return """
+        This plugin will check for web cache poiosning vulnerabilities.
+        """
