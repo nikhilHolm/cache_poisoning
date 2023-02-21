@@ -69,48 +69,48 @@ class Web_Cache(AuditPlugin):
         :param debugging_id: A unique identifier for this call to audit()
         """
 
-        # self._path_based_caching(freq, orig_response)
+        self._path_based_caching(freq, orig_response)
 
         self.headers_poisoning_check(freq, orig_response)
 
     def headers_poisoning_check(self, freq, orig_response):
-        normal_check = 0
-
-        total_times = 10
+        total_times = 20
 
         while total_times:
             total_times -= 1
 
             for injected_header in self.headersToFuzz:
-                header = Headers([injected_header])
-                freq_copy = copy.deepcopy(freq)
-                freq_copy.set_headers(headers=header)
-                freq_copy.set_force_fuzzing_headers(headers=header)
+                vulnerable = 0
+                poison_check = 0
+                total_attempts = 10
+                while total_attempts:
+                    total_attempts -= 1
+                    self.custom_sleep(total_attempts)
+                    header = Headers([injected_header])
+                    freq_copy = copy.deepcopy(freq)
+                    freq_copy.set_headers(headers=header)
+                    freq_copy.set_force_fuzzing_headers(headers=header)
 
-                poisoned_mutants = create_mutants(
-                    freq=freq_copy,
-                    mutant_str_list=[self.CANARY],
-                    orig_resp=orig_response,
-                    debug_id=self.debug_id,
-                )
+                    poisoned_mutants = create_mutants(
+                        freq=freq_copy,
+                        mutant_str_list=[self.CANARY],
+                        orig_resp=orig_response,
+                        debug_id=self.debug_id,
+                    )
 
-                poisoned_res = None
+                    poisoned_res = None
 
-                for mutant in poisoned_mutants:
-                    if (type(mutant) == HeadersMutant) and poisoned_res is None:
-                        poisoned_res = self._uri_opener.send_mutant(
-                            mutant, cache=False, grep=True, debug_id=self.debug_id, follow_redirects=False
-                        )
+                    for mutant in poisoned_mutants:
+                        if (type(mutant) == HeadersMutant) and poisoned_res is None:
+                            poisoned_res = self._uri_opener.send_mutant(
+                                mutant, cache=False, grep=True, debug_id=self.debug_id, follow_redirects=False
+                            )
 
-                if self._check_if_input_returned(self.CANARY, poisoned_res):
-                    print(
-                        "********************  INPUT RETURNED - cache poison ***************")
-                    total_attempts = 10
-                    while total_attempts:
-                        self.custom_sleep(total_attempts)
+                            if self._check_if_input_returned(self.CANARY, poisoned_res):
+                                poison_check += 1
+
+                    if (5 <= poison_check <= 10):
                         payload = [rand_alnum(10).lower()]
-
-                        total_attempts -= 1
 
                         header = Headers([injected_header])
                         freq_copy = copy.deepcopy(freq)
@@ -125,35 +125,27 @@ class Web_Cache(AuditPlugin):
                         )
 
                         for mutant in mutants:
-                            normal_res = self._uri_opener.send_mutant(
-                                mutant,
-                                grep=True,
-                                debug_id=self.debug_id,
-                            )
-                            if self._check_if_input_returned(self.CANARY, normal_res):
-                                print(
-                                    "*********************  INPUT RETURNED  ********************************")
-                                normal_check += 1
+                            if (type(mutant) == HeadersMutant):
+                                normal_res = self._uri_opener.send_mutant(
+                                    mutant,
+                                    grep=True,
+                                    debug_id=self.debug_id,
+                                )
+                                if self._check_if_input_returned(self.CANARY, normal_res):
+                                    vulnerable += 1
 
-                    if 5 <= normal_check < 10:
-                        total_attempts = 0
-                        normal_check = 0
-                        total_times = 0
-                        self._report_headers_poisoning_check(
-                            injected_header, orig_response
-                        )
-                        break
-                    elif (normal_check == 10):
-                        total_attempts = 0
-                        normal_check = 0
-                        logger.info(
-                            "No cache in middle, just payload is reflecting everytime")
+                    else:
+                        continue
 
-                else:
-                    continue
-
-    def custom_sleep(self, sec):
-        time.sleep(sec)
+                if vulnerable >= 5:
+                    total_attempts = 0
+                    vulnerable = 0
+                    poison_check = 0
+                    total_times = 0
+                    self._report_headers_poisoning_check(
+                        injected_header, orig_response
+                    )
+                    break
 
     def _report_headers_poisoning_check(
         self, header, orig_response
@@ -247,6 +239,9 @@ class Web_Cache(AuditPlugin):
             return True
 
         return False
+
+    def custom_sleep(self, sec):
+        time.sleep(sec)
 
     def get_long_desc(self):
         """
