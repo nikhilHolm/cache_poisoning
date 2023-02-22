@@ -168,11 +168,10 @@ class Web_Cache(AuditPlugin):
         )
         v.set_url(orig_response.get_url())
 
-        # logger.info(v.get_desc(), debug_id=self.debug_id)
+        logger.info(v.get_desc(), debug_id=self.debug_id)
         self.kb_append_uniq(self, "Unkeyed_header_cache_poisoning", v)
 
     def fat_get_poisoning_check(self, freq, orig_response):
-        # checking if modified parameter value is relfecting in response body
         flag = 0
         payload = [rand_alnum(10).lower()]
 
@@ -192,14 +191,14 @@ class Web_Cache(AuditPlugin):
                 grep=True,
                 debug_id=self.debug_id,
             )
-
+            # checking if the modified parameter value is reflected in the response body
             if self._check_if_input_returned(payload, poisoned_res):
                 flag = 1
                 data = mutant.get_dc()
 
-        # if modified parameter value is returned in response page, then
-        # send a body of {modified_parameter=random_string} in original freq uri request,
-        # analyze response if random_string is getting cached in response page
+        # If the modified parameter value is returned in the response page,
+        # send 'modified_parameter=random_string' data in the original URI request and
+        # examine the response to see if 'random_string' is cached in the response page.
         if flag == 1:
             total_times = 20
             try:
@@ -216,8 +215,6 @@ class Web_Cache(AuditPlugin):
                         debug_id=self.debug_id,
                     )
 
-                    print(f"normal_res: {normal_res.get_body()}")
-
                     if (self._check_if_input_returned(payload, normal_res)):
                         self._report_fat_get_poisoning_check(
                             payload, orig_response, data)
@@ -231,7 +228,7 @@ class Web_Cache(AuditPlugin):
     ):
         desc = (
             f"Web Cache Poisoning [fat-get] has been found by sending a data [{data}] in request, "
-            f"Resulting in response containing {payload[0]}.\n"
+            f"Resulting in response containing {payload[0]}"
         )
 
         v = Vuln(
@@ -245,7 +242,7 @@ class Web_Cache(AuditPlugin):
         )
         v.set_url(orig_response.get_url())
 
-        # logger.info(v.get_desc(), debug_id=self.debug_id)
+        logger.info(v.get_desc(), debug_id=self.debug_id)
         self.kb_append_uniq(self, "fat_get_based_cache_poisoning", v)
 
     def _path_based_caching(self, freq, orig_response):
@@ -261,7 +258,6 @@ class Web_Cache(AuditPlugin):
             orig_resp=orig_response,
             debug_id=self.debug_id,
         )
-        print(f"mutants :{mutants}")
 
         for mutant in mutants:
             poisoned_res = self._uri_opener.send_mutant(
@@ -308,7 +304,7 @@ class Web_Cache(AuditPlugin):
         )
         v.set_url(orig_response.get_url())
 
-        # logger.info(v.get_desc(), debug_id=self.debug_id)
+        logger.info(v.get_desc(), debug_id=self.debug_id)
         self.kb_append_uniq(self, "path_based_cache_poisoning", v)
 
     def _check_if_input_returned(self, payload, response):
@@ -328,5 +324,5 @@ class Web_Cache(AuditPlugin):
         :return: A DETAILED description of the plugin functions and features.
         """
         return """
-        This plugin will check for web cache poiosning vulnerabilities.
+        This plugin will check for web cache poisoning vulnerabilities.
         """
