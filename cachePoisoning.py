@@ -5,10 +5,8 @@ from w3af.core.data.constants import severity
 from w3af.core.data.dc.headers import Headers
 from w3af.core.data.fuzzer.mutants.headers_mutant import HeadersMutant
 from w3af.core.data.fuzzer.utils import rand_alnum
-from w3af.core.data.fuzzer.mutants.postdata_mutant import PostDataMutant
-
+from w3af.core.data.fuzzer.mutants.querystring_mutant import QSMutant
 from w3af.core.data.request.fuzzable_request import FuzzableRequest
-
 
 import re
 import time
@@ -209,11 +207,11 @@ class Web_Cache(AuditPlugin):
                     self.custom_sleep(total_times)
                     total_times -= 1
                     freq_local = FuzzableRequest(
-                        freq.get_uri(), method="POST", post_data=data)
-                    postmutant = PostDataMutant(freq_local)
+                        freq.get_uri(), method="GET", post_data=data)
+                    datamutant = QSMutant(freq_local)
 
                     normal_res = self._uri_opener.send_mutant(
-                        postmutant,
+                        datamutant,
                         grep=True,
                         debug_id=self.debug_id,
                     )
