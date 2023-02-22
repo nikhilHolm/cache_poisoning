@@ -5,6 +5,9 @@ from w3af.core.data.constants import severity
 from w3af.core.data.dc.headers import Headers
 from w3af.core.data.fuzzer.mutants.headers_mutant import HeadersMutant
 from w3af.core.data.fuzzer.utils import rand_alnum
+from w3af.core.data.fuzzer.mutants.postdata_mutant import PostDataMutant
+
+from w3af.core.data.request.fuzzable_request import FuzzableRequest
 
 
 import re
@@ -69,9 +72,11 @@ class Web_Cache(AuditPlugin):
         :param debugging_id: A unique identifier for this call to audit()
         """
 
+        self.headers_poisoning_check(freq, orig_response)
+
         self._path_based_caching(freq, orig_response)
 
-        self.headers_poisoning_check(freq, orig_response)
+        self.fat_get_poisoning_check(freq, orig_response)
 
     def headers_poisoning_check(self, freq, orig_response):
         total_times = 20
@@ -167,6 +172,83 @@ class Web_Cache(AuditPlugin):
 
         # logger.info(v.get_desc(), debug_id=self.debug_id)
         self.kb_append_uniq(self, "Unkeyed_header_cache_poisoning", v)
+
+    def fat_get_poisoning_check(self, freq, orig_response):
+        # checking if modified parameter value is relfecting in response body
+        flag = 0
+        payload = [rand_alnum(10).lower()]
+
+        if freq.get_method().upper() != "GET":
+            return
+
+        mutants = create_mutants(
+            freq,
+            mutant_str_list=payload,
+            orig_resp=orig_response,
+            debug_id=self.debug_id,
+        )
+
+        for mutant in mutants:
+            poisoned_res = self._uri_opener.send_mutant(
+                mutant,
+                grep=True,
+                debug_id=self.debug_id,
+            )
+
+            if self._check_if_input_returned(payload, poisoned_res):
+                flag = 1
+                data = mutant.get_dc()
+
+        # if modified parameter value is returned in response page, then
+        # send a body of {modified_parameter=random_string} in original freq uri request,
+        # analyze response if random_string is getting cached in response page
+        if flag == 1:
+            total_times = 20
+            try:
+                while total_times:
+                    self.custom_sleep(total_times)
+                    total_times -= 1
+                    freq_local = FuzzableRequest(
+                        freq.get_uri(), method="POST", post_data=data)
+                    postmutant = PostDataMutant(freq_local)
+
+                    normal_res = self._uri_opener.send_mutant(
+                        postmutant,
+                        grep=True,
+                        debug_id=self.debug_id,
+                    )
+
+                    print(f"normal_res: {normal_res.get_body()}")
+
+                    if (self._check_if_input_returned(payload, normal_res)):
+                        self._report_fat_get_poisoning_check(
+                            payload, orig_response, data)
+                        break
+
+            except (RuntimeError, BaseException):
+                pass
+
+    def _report_fat_get_poisoning_check(
+        self, payload, orig_response, data
+    ):
+        desc = (
+            f"Web Cache Poisoning [fat-get] has been found by sending a data [{data}] in request, "
+            f"Resulting in response containing {payload[0]}.\n"
+        )
+
+        v = Vuln(
+            name="Web Cache Poisoning [fat-get]",
+            desc=desc,
+            severity=severity.HIGH,
+            response_ids=orig_response.id,
+            vulndb_id=" ",
+            plugin_name=self.get_name(),
+            debug_id=self.debug_id,
+        )
+        v.set_url(orig_response.get_url())
+
+        # logger.info(v.get_desc(), debug_id=self.debug_id)
+        self.kb_append_uniq(self, "fat_get_based_cache_poisoning", v)
 
     def _path_based_caching(self, freq, orig_response):
         flag = 0
