@@ -70,9 +70,9 @@ class Web_Cache(AuditPlugin):
         :param debugging_id: A unique identifier for this call to audit()
         """
 
-        self.headers_poisoning_check(freq, orig_response)
+        # self.headers_poisoning_check(freq, orig_response)
 
-        self._path_based_caching(freq, orig_response)
+        # self._path_based_caching(freq, orig_response)
 
         self.fat_get_poisoning_check(freq, orig_response)
 
@@ -133,6 +133,7 @@ class Web_Cache(AuditPlugin):
                                     mutant,
                                     grep=True,
                                     debug_id=self.debug_id,
+                                    cache=False,
                                 )
                                 if self._check_if_input_returned(self.CANARY, normal_res):
                                     vulnerable += 1
@@ -172,36 +173,42 @@ class Web_Cache(AuditPlugin):
         self.kb_append_uniq(self, "Unkeyed_header_cache_poisoning", v)
 
     def fat_get_poisoning_check(self, freq, orig_response):
-        flag = 0
-        payload = [rand_alnum(10).lower()]
+        total_attempts = 10
 
-        if freq.get_method().upper() != "GET":
-            return
+        while total_attempts:
+            print(f"total attempts :{total_attempts}")
+            total_attempts -= 1
+            flag = 0
+            payload = [rand_alnum(10).lower()]
 
-        mutants = create_mutants(
-            freq,
-            mutant_str_list=payload,
-            orig_resp=orig_response,
-            debug_id=self.debug_id,
-        )
+            if freq.get_method().upper() != "GET":
+                return
 
-        for mutant in mutants:
-            poisoned_res = self._uri_opener.send_mutant(
-                mutant,
-                grep=True,
+            mutants = create_mutants(
+                freq,
+                mutant_str_list=payload,
+                orig_resp=orig_response,
                 debug_id=self.debug_id,
             )
-            # checking if the modified parameter value is reflected in the response body
-            if self._check_if_input_returned(payload, poisoned_res):
-                flag = 1
-                data = mutant.get_dc()
 
-        # If the modified parameter value is returned in the response page,
-        # send 'modified_parameter=random_string' data in the original URI request and
-        # examine the response to see if 'random_string' is cached in the response page.
-        if flag == 1:
-            total_times = 20
-            try:
+            for mutant in mutants:
+                poisoned_res = self._uri_opener.send_mutant(
+                    mutant,
+                    grep=True,
+                    cache=False,
+                    debug_id=self.debug_id,
+                )
+                # checking if the modified parameter value is reflected in the response body
+                if self._check_if_input_returned(payload, poisoned_res):
+                    flag = 1
+                    data = mutant.get_dc()
+
+            # If the modified parameter value is returned in the response page,
+            # send 'modified_parameter=random_string' data in the original URI request and
+            # examine the response to see if 'random_string' is cached in the response page.
+            if flag == 1:
+                total_times = 10
+                vulnerable = 0
                 while total_times:
                     self.custom_sleep(total_times)
                     total_times -= 1
@@ -209,19 +216,30 @@ class Web_Cache(AuditPlugin):
                         freq.get_uri(), method="GET", post_data=data)
                     datamutant = QSMutant(freq_local)
 
-                    normal_res = self._uri_opener.send_mutant(
-                        datamutant,
-                        grep=True,
-                        debug_id=self.debug_id,
-                    )
+                    try:
+                        print(f"total_times: {total_times}")
+                        normal_res = self._uri_opener.send_mutant(
+                            datamutant,
+                            grep=True,
+                            cache=False,
+                            debug_id=self.debug_id,
+                        )
+                        print(f"\n\n{normal_res.get_body()}\n")
+                    except (RuntimeError, BaseException):
+                        pass
+
+                    print(f"sending data :{data}, paylaod checking :{payload[0]}")
 
                     if (self._check_if_input_returned(payload, normal_res)):
-                        self._report_fat_get_poisoning_check(
-                            payload, orig_response, data)
-                        break
+                            vulnerable += 1
+                            print(f"vulnerable :{vulnerable}")
+                        
+                if 1 <= vulnerable < 10:
+                    self._report_fat_get_poisoning_check(
+                        payload, orig_response, data)
+                    break
 
-            except (RuntimeError, BaseException):
-                pass
+            
 
     def _report_fat_get_poisoning_check(
         self, payload, orig_response, data
