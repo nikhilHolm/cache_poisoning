@@ -77,7 +77,7 @@ class Web_Cache(AuditPlugin):
         self.fat_get_poisoning_check(freq, orig_response)
 
     def headers_poisoning_check(self, freq, orig_response):
-        total_times = 20
+        total_times = 10
 
         while total_times:
             total_times -= 1
@@ -141,7 +141,7 @@ class Web_Cache(AuditPlugin):
                     else:
                         continue
 
-                if vulnerable >= 5:
+                if 1<= vulnerable < 10:
                     total_attempts = 0
                     vulnerable = 0
                     poison_check = 0
@@ -235,6 +235,7 @@ class Web_Cache(AuditPlugin):
                             print(f"vulnerable :{vulnerable}")
                         
                 if 1 <= vulnerable < 10:
+                    vulnerable = 0
                     self._report_fat_get_poisoning_check(
                         payload, orig_response, data)
                     break
@@ -246,7 +247,7 @@ class Web_Cache(AuditPlugin):
     ):
         desc = (
             f"Web Cache Poisoning [fat-get] has been found by sending a data [{data}] in request, "
-            f"Resulting in response containing {payload[0]}"
+            f"Resulting in response caching {payload[0]}"
         )
 
         v = Vuln(
@@ -281,6 +282,7 @@ class Web_Cache(AuditPlugin):
             poisoned_res = self._uri_opener.send_mutant(
                 mutant,
                 grep=True,
+                cache=False,
                 debug_id=self.debug_id,
             )
 
@@ -307,8 +309,8 @@ class Web_Cache(AuditPlugin):
     ):
         desc = (
             f"Web Cache Poisoning [path based] has been found by setting parameter {payload[0]} in request, "
-            f"Resulting in response containing {payload[0]}.\n"
-            f"Normal response after sending the request containing same parameter {payload[0]} indicates it has been cached."
+            f"Resulting in response caching {payload[0]}.\n"
+            f"Normal response after sending the request caching same parameter {payload[0]} indicates it has been cached."
         )
 
         v = Vuln(
